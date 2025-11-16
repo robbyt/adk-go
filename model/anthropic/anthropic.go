@@ -90,6 +90,10 @@ func NewModel(ctx context.Context, modelName string, cfg *Config) (model.LLM, er
 
 	opts := append([]option.RequestOption{}, cfg.ClientOptions...)
 
+	// Disable retries by default for predictable error handling.
+	// Users can override this via ClientOptions if needed.
+	opts = append(opts, option.WithMaxRetries(0))
+
 	switch cfg.Provider {
 	case ProviderAnthropic:
 		if cfg.APIKey == "" {
@@ -146,7 +150,7 @@ func (m *AnthropicModel) generate(ctx context.Context, req *model.LLMRequest) (*
 
 	msg, err := m.client.Messages.New(ctx, *params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send llm request to anthropic: %w", err)
+		return nil, normalizeError(err)
 	}
 
 	responseBuilder := ResponseBuilder{}
@@ -182,7 +186,7 @@ func readStreamEvents(stream *ssestream.Stream[anthropic.MessageStreamEventUnion
 		}()
 
 		if err := stream.Err(); err != nil {
-			yield(nil, fmt.Errorf("got the stream error: %w", err))
+			yield(nil, normalizeError(err))
 			return
 		}
 
@@ -190,7 +194,7 @@ func readStreamEvents(stream *ssestream.Stream[anthropic.MessageStreamEventUnion
 		for stream.Next() {
 			event := stream.Current()
 			if err := message.Accumulate(event); err != nil {
-				yield(nil, fmt.Errorf("accumulate stream event error: %w", err))
+				yield(nil, normalizeError(err))
 				return
 			}
 
@@ -216,7 +220,7 @@ func readStreamEvents(stream *ssestream.Stream[anthropic.MessageStreamEventUnion
 		}
 
 		if err := stream.Err(); err != nil {
-			yield(nil, fmt.Errorf("got the stream error: %w", err))
+			yield(nil, normalizeError(err))
 		}
 	}
 }
