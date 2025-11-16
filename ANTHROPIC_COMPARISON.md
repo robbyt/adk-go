@@ -287,15 +287,32 @@ func schemaToMap(schema *genai.Schema) (map[string]any, error) {
 
 ### 10. Error Handling
 
-**ADK-Go**:
+**ADK-Go** (Updated):
 ```go
+// Disable retries by default for predictable error handling
+opts = append(opts, option.WithMaxRetries(0))
+
+// Normalize errors
 if err != nil {
-    return nil, fmt.Errorf("failed to send llm request to anthropic: %w", err)
+    return nil, normalizeError(err)
 }
+
+// AnthropicError wrapper with status code, type, message, request ID
+type AnthropicError struct {
+    StatusCode int
+    Type       string
+    Message    string
+    RequestID  string
+    Err        error
+}
+
+// Helper methods: IsRateLimitError(), IsAuthenticationError(), etc.
 ```
-- Simple error wrapping
-- No retry configuration visible (uses SDK defaults)
-- No error type normalization
+- ✅ Error normalization with structured AnthropicError type
+- ✅ Explicit retry configuration disabled (option.WithMaxRetries(0))
+- ✅ Helper methods for error type identification
+- ✅ Preserves request IDs for debugging
+- ✅ Comprehensive test coverage
 
 **Fantasy**:
 ```go
@@ -310,7 +327,7 @@ func toProviderErr(err error) error {
 }
 ```
 
-**Implication**: Fantasy has more sophisticated error handling and explicit no-retry policy
+**Implication**: Both now have sophisticated error handling with explicit no-retry policy and error normalization
 
 ---
 
@@ -367,8 +384,8 @@ const defaultMaxTokens = 8192
 | **Message Grouping** | Direct 1:1 | Role consolidation |
 | **Stream Events** | Delta events only | All event types |
 | **Tool Results** | Stringified | Structured |
-| **Error Handling** | Basic wrapping | Normalized + no retries |
-| **Retry Policy** | SDK defaults | Explicit disabled |
+| **Error Handling** | ✅ Normalized + no retries | ✅ Normalized + no retries |
+| **Retry Policy** | ✅ Explicit disabled | ✅ Explicit disabled |
 | **Code Execution** | ✅ Special handling | ❌ N/A |
 | **Testing Support** | Standard | `skipAuth` option |
 
@@ -379,13 +396,25 @@ const defaultMaxTokens = 8192
 Based on Fantasy's implementation, consider these potential improvements:
 
 1. **Add prompt caching support** - Can significantly reduce costs for repeated contexts
-2. **Implement explicit retry configuration** - `option.WithMaxRetries(0)` for predictability
+2. ~~**Implement explicit retry configuration**~~ - ✅ **DONE** - `option.WithMaxRetries(0)` for predictability
 3. **Consider lazy client initialization** - For better testability and dynamic config
 4. **Enhance stream event handling** - Expose `content_block_start/stop` for richer UX
-5. **Add error normalization** - Map Anthropic errors to ADK error types
+5. ~~**Add error normalization**~~ - ✅ **DONE** - Map Anthropic errors to ADK error types
 6. **Support extended thinking budgets** - Allow configuration of thinking token limits
 7. **Improve tool result handling** - Preserve structure instead of stringifying
 8. **Use functional options** - More Go-idiomatic than struct-based config
+
+### Completed Improvements
+
+- ✅ **Error Normalization** (implemented in commit 925736c)
+  - Added `AnthropicError` wrapper with status code, type, message, and request ID
+  - Helper methods for error type identification (rate limit, auth, invalid request, server errors)
+  - Comprehensive test coverage
+  - All errors normalized through `normalizeError()` function
+
+- ✅ **Retry Policy** (implemented in commit 925736c)
+  - Explicit `option.WithMaxRetries(0)` for predictable behavior
+  - Users can override via `ClientOptions` if needed
 
 ## Notes
 
