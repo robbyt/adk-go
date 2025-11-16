@@ -161,11 +161,105 @@ func TestStringifyFunctionResponse(t *testing.T) {
 			resp: nil,
 			want: "",
 		},
+		{
+			name: "result_with_map_structure",
+			resp: map[string]any{"result": map[string]any{"name": "John", "age": 30}},
+			want: `{"age":30,"name":"John"}`, // JSON keys are sorted alphabetically
+		},
+		{
+			name: "result_with_array",
+			resp: map[string]any{"result": []any{"apple", "banana", "cherry"}},
+			want: `["apple","banana","cherry"]`,
+		},
+		{
+			name: "output_with_nested_structure",
+			resp: map[string]any{"output": map[string]any{
+				"status": "success",
+				"data":   map[string]any{"count": 42, "items": []any{1, 2, 3}},
+			}},
+			want: `{"data":{"count":42,"items":[1,2,3]},"status":"success"}`,
+		},
+		{
+			name: "result_with_string_value",
+			resp: map[string]any{"result": "simple string"},
+			want: "simple string",
+		},
+		{
+			name: "result_with_number",
+			resp: map[string]any{"result": 123.45},
+			want: "123.45",
+		},
+		{
+			name: "result_with_boolean",
+			resp: map[string]any{"result": true},
+			want: "true",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := stringifyFunctionResponse(tt.resp); got != tt.want {
 				t.Fatalf("stringifyFunctionResponse() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSerializeValue(t *testing.T) {
+	tests := []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{
+			name:  "nil_value",
+			value: nil,
+			want:  "",
+		},
+		{
+			name:  "string_value",
+			value: "hello world",
+			want:  "hello world",
+		},
+		{
+			name:  "int_value",
+			value: 42,
+			want:  "42",
+		},
+		{
+			name:  "float_value",
+			value: 3.14,
+			want:  "3.14",
+		},
+		{
+			name:  "bool_true",
+			value: true,
+			want:  "true",
+		},
+		{
+			name:  "bool_false",
+			value: false,
+			want:  "false",
+		},
+		{
+			name:  "map_value",
+			value: map[string]any{"key": "value", "num": 123},
+			want:  `{"key":"value","num":123}`,
+		},
+		{
+			name:  "slice_value",
+			value: []any{1, 2, 3},
+			want:  `[1,2,3]`,
+		},
+		{
+			name:  "nested_structure",
+			value: map[string]any{"data": []any{"a", "b"}, "count": 2},
+			want:  `{"count":2,"data":["a","b"]}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := serializeValue(tt.value); got != tt.want {
+				t.Fatalf("serializeValue() = %q, want %q", got, tt.want)
 			}
 		})
 	}

@@ -251,14 +251,41 @@ func stringifyFunctionResponse(resp map[string]any) string {
 		return ""
 	}
 	if result, ok := resp["result"]; ok && result != nil {
-		return fmt.Sprint(result)
+		return serializeValue(result)
 	}
 	if output, ok := resp["output"]; ok && output != nil {
-		return fmt.Sprint(output)
+		return serializeValue(output)
 	}
 	data, err := json.Marshal(resp)
 	if err != nil {
 		return fmt.Sprint(resp)
+	}
+	return string(data)
+}
+
+// serializeValue converts a value to a string, preserving JSON structure
+// for complex types (maps, slices) while using simple string conversion
+// for primitives (string, number, bool).
+func serializeValue(v any) string {
+	if v == nil {
+		return ""
+	}
+
+	// Handle primitives directly for better readability
+	switch val := v.(type) {
+	case string:
+		return val
+	case bool, int, int8, int16, int32, int64,
+		uint, uint8, uint16, uint32, uint64,
+		float32, float64:
+		return fmt.Sprint(val)
+	}
+
+	// For complex types (maps, slices, structs), use JSON encoding
+	data, err := json.Marshal(v)
+	if err != nil {
+		// Fallback to fmt.Sprint if JSON encoding fails
+		return fmt.Sprint(v)
 	}
 	return string(data)
 }

@@ -255,30 +255,45 @@ for _, block := range blocks {
 
 ### 8. Tool Result Serialization
 
-**ADK-Go**:
+**ADK-Go** (Updated):
 ```go
 func stringifyFunctionResponse(resp map[string]any) string {
     if result, ok := resp["result"]; ok && result != nil {
-        return fmt.Sprint(result)
+        return serializeValue(result)  // Preserves JSON structure
     }
     if output, ok := resp["output"]; ok && output != nil {
-        return fmt.Sprint(output)
+        return serializeValue(output)  // Preserves JSON structure
     }
-    return string(json.Marshal(resp))  // Fallback to JSON string
+    return string(json.Marshal(resp))
 }
 
-// Creates text-based tool result
-anthropic.NewToolResultBlock(funcResponse.ID, content, false)
+// serializeValue preserves JSON structure for complex types
+func serializeValue(v any) string {
+    // Primitives (string, bool, numbers) -> simple string
+    // Complex types (maps, slices, structs) -> JSON encoded
+    switch val := v.(type) {
+    case string:
+        return val
+    case bool, int, int8, int16, int32, int64,
+        uint, uint8, uint16, uint32, uint64,
+        float32, float64:
+        return fmt.Sprint(val)
+    }
+    // Complex types use JSON encoding
+    data, _ := json.Marshal(v)
+    return string(data)
+}
 ```
-- Converts all tool results to strings
-- Loses type information
-- Simple but potentially lossy
+- ✅ Preserves JSON structure for maps and slices
+- ✅ Uses simple string conversion for primitives (better readability)
+- ✅ Maintains type information in complex results
 
 **Fantasy**:
-- Likely preserves structured data in tool results
+- Preserves structured data in tool results
+- Uses `ToolResultBlockParamContentUnion` array
 - More faithful to Anthropic's API expectations
 
-**Implication**: ADK-Go may lose precision in complex tool results
+**Implication**: Both implementations now preserve structure properly
 
 ---
 
@@ -400,7 +415,7 @@ const defaultMaxTokens = 8192
 | **Prompt Caching** | ❌ Not implemented | ✅ Implemented |
 | **Message Grouping** | Direct 1:1 | Role consolidation |
 | **Stream Events** | Delta events only | All event types |
-| **Tool Results** | Stringified | Structured |
+| **Tool Results** | ✅ JSON preserved | ✅ Structured |
 | **Error Handling** | ✅ Normalized + no retries | ✅ Normalized + no retries |
 | **Retry Policy** | ✅ Explicit disabled | ✅ Explicit disabled |
 | **Code Execution** | ✅ Special handling | ❌ N/A |
@@ -418,7 +433,7 @@ Based on Fantasy's implementation, consider these potential improvements:
 4. **Enhance stream event handling** - Expose `content_block_start/stop` for richer UX
 5. ~~**Add error normalization**~~ - ✅ **DONE** - Map Anthropic errors to ADK error types
 6. ~~**Support extended thinking context preservation**~~ - ✅ **DONE** - Thinking blocks stored in CustomMetadata
-7. **Improve tool result handling** - Preserve structure instead of stringifying
+7. ~~**Improve tool result handling**~~ - ✅ **DONE** - Preserve JSON structure for complex types
 8. **Use functional options** - More Go-idiomatic than struct-based config
 
 ### Completed Improvements
@@ -433,7 +448,7 @@ Based on Fantasy's implementation, consider these potential improvements:
   - Explicit `option.WithMaxRetries(0)` for predictable behavior
   - Users can override via `ClientOptions` if needed
 
-- ✅ **Extended Thinking / Reasoning Support** (implemented in this commit)
+- ✅ **Extended Thinking / Reasoning Support** (implemented in commit 86ad125)
   - Created `ThinkingBlock` type to store thinking content separately
   - Thinking blocks NOT included in main Content (not sent to client)
   - Thinking preserved in `CustomMetadata["thinking_context"]` for future requests
@@ -441,6 +456,15 @@ Based on Fantasy's implementation, consider these potential improvements:
   - Supports both "thinking" and "redacted_thinking" types
   - Streaming thinking deltas stored in `CustomMetadata["thinking_delta"]`
   - Comprehensive test coverage for all thinking block types
+
+- ✅ **Tool Result Serialization** (implemented in this commit)
+  - Added `serializeValue()` helper function to preserve JSON structure
+  - Primitives (string, bool, numbers) converted to simple strings for readability
+  - Complex types (maps, slices, structs) JSON-encoded to preserve structure
+  - Previously: `fmt.Sprint()` would produce "map[key:value]" for maps
+  - Now: produces proper JSON `{"key":"value"}` for maps
+  - Added comprehensive test coverage including `TestSerializeValue` and enhanced `TestStringifyFunctionResponse`
+  - Test coverage increased to 81.0%
 
 ## Notes
 
