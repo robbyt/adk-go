@@ -157,16 +157,32 @@ case anthropic.ContentBlockStopEvent:
 
 ### 5. Extended Thinking / Reasoning Support
 
-**ADK-Go**:
+**ADK-Go** (Updated):
 ```go
+// ThinkingBlock type for structured storage
+type ThinkingBlock struct {
+    Thinking  string `json:"thinking"`
+    Signature string `json:"signature,omitempty"`
+    Type      string `json:"type"` // "thinking" or "redacted_thinking"
+}
+
+// Thinking blocks stored separately, not in main content
 case anthropic.ThinkingDelta:
     if v.Thinking != "" {
-        part = &genai.Part{Text: v.Thinking, Thought: true}
+        // Store in CustomMetadata["thinking_delta"], not in Content
+        response.CustomMetadata["thinking_delta"] = v.Thinking
     }
+
+// Full message handling
+resp.CustomMetadata["thinking_context"] = ThinkingContext{
+    Blocks: thinkingBlocks, // Preserved for future requests
+}
 ```
-- Basic support: captures thinking deltas with `Thought: true` flag
-- No configuration for thinking budget/tokens
-- No signature/metadata preservation
+- ✅ Thinking blocks separated from client content
+- ✅ Signature preservation for verification
+- ✅ Handles both "thinking" and "redacted_thinking" types
+- ✅ Thinking stored in CustomMetadata for context preservation
+- ❌ No configuration for thinking budget/tokens (request-level feature)
 
 **Fantasy**:
 ```go
@@ -184,9 +200,10 @@ case anthropic.MessageDeltaEvent:
     if delta.SignatureDelta != nil {
         // Preserve signing metadata
     }
+}
 ```
 
-**Implication**: Fantasy has first-class extended thinking support with budget control
+**Implication**: Both now properly handle thinking blocks with separation from client content. ADK-Go preserves thinking for context while Fantasy also provides budget control configuration.
 
 ---
 
@@ -379,7 +396,7 @@ const defaultMaxTokens = 8192
 | **Primary Deployment** | Vertex AI | Multi-provider |
 | **Vertex Auth** | `WithGoogleAuth()` | `WithCredentials()` + ADC |
 | **Config Pattern** | Struct + switch | Functional options |
-| **Extended Thinking** | Basic delta capture | Full budget control |
+| **Extended Thinking** | ✅ Context preservation | ✅ Budget control + context |
 | **Prompt Caching** | ❌ Not implemented | ✅ Implemented |
 | **Message Grouping** | Direct 1:1 | Role consolidation |
 | **Stream Events** | Delta events only | All event types |
@@ -400,7 +417,7 @@ Based on Fantasy's implementation, consider these potential improvements:
 3. **Consider lazy client initialization** - For better testability and dynamic config
 4. **Enhance stream event handling** - Expose `content_block_start/stop` for richer UX
 5. ~~**Add error normalization**~~ - ✅ **DONE** - Map Anthropic errors to ADK error types
-6. **Support extended thinking budgets** - Allow configuration of thinking token limits
+6. ~~**Support extended thinking context preservation**~~ - ✅ **DONE** - Thinking blocks stored in CustomMetadata
 7. **Improve tool result handling** - Preserve structure instead of stringifying
 8. **Use functional options** - More Go-idiomatic than struct-based config
 
@@ -415,6 +432,15 @@ Based on Fantasy's implementation, consider these potential improvements:
 - ✅ **Retry Policy** (implemented in commit 925736c)
   - Explicit `option.WithMaxRetries(0)` for predictable behavior
   - Users can override via `ClientOptions` if needed
+
+- ✅ **Extended Thinking / Reasoning Support** (implemented in this commit)
+  - Created `ThinkingBlock` type to store thinking content separately
+  - Thinking blocks NOT included in main Content (not sent to client)
+  - Thinking preserved in `CustomMetadata["thinking_context"]` for future requests
+  - Signature preservation for verification
+  - Supports both "thinking" and "redacted_thinking" types
+  - Streaming thinking deltas stored in `CustomMetadata["thinking_delta"]`
+  - Comprehensive test coverage for all thinking block types
 
 ## Notes
 

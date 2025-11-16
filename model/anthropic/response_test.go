@@ -132,17 +132,15 @@ func TestParsePartialStreamEvent(t *testing.T) {
 			name: "text_delta",
 			raw:  `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}`,
 			want: &model.LLMResponse{
-				Content: genai.NewContentFromText("partial", genai.RoleModel),
+				Content:        genai.NewContentFromText("partial", genai.RoleModel),
+				CustomMetadata: map[string]any{},
 			},
 		},
 		{
 			name: "thinking_delta",
 			raw:  `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reason"}}`,
 			want: &model.LLMResponse{
-				Content: genai.NewContentFromParts(
-					[]*genai.Part{{Text: "reason", Thought: true}},
-					genai.RoleModel,
-				),
+				CustomMetadata: map[string]any{"thinking_delta": "reason"},
 			},
 		},
 		{
@@ -413,6 +411,181 @@ func TestExtractUsage(t *testing.T) {
 			}
 			if got.CachedContentTokenCount != tt.wantCachedContentTokens {
 				t.Errorf("CachedContentTokenCount = %d, want %d", got.CachedContentTokenCount, tt.wantCachedContentTokens)
+			}
+		})
+	}
+}
+
+func TestThinkingBlockHandling(t *testing.T) {
+	t.Parallel()
+
+	messageJSON := `{
+		"id": "msg_thinking",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-3-opus",
+		"stop_reason": "end_turn",
+		"content": [
+			{"type": "thinking", "thinking": "Let me analyze this carefully...", "signature": "sig123"},
+			{"type": "text", "text": "Based on my analysis, here is the answer."},
+			{"type": "redacted_thinking"}
+		],
+		"usage": {
+			"input_tokens": 10,
+			"output_tokens": 20
+		}
+	}`
+
+	msg := mustUnmarshalMessage(t, messageJSON)
+	builder := ResponseBuilder{}
+
+	resp, err := builder.FromMessage(msg)
+	if err != nil {
+		t.Fatalf("FromMessage() error = %v", err)
+	}
+
+	// Main content should only contain text, not thinking
+	if len(resp.Content.Parts) != 1 {
+		t.Errorf("expected 1 part in content (text only), got %d", len(resp.Content.Parts))
+	}
+	if resp.Content.Parts[0].Text != "Based on my analysis, here is the answer." {
+		t.Errorf("unexpected text content: %s", resp.Content.Parts[0].Text)
+	}
+
+	// Thinking should be in CustomMetadata
+	thinkingCtx, ok := resp.CustomMetadata["thinking_context"].(ThinkingContext)
+	if !ok {
+		t.Fatal("thinking_context not found in CustomMetadata")
+	}
+
+	if len(thinkingCtx.Blocks) != 2 {
+		t.Fatalf("expected 2 thinking blocks, got %d", len(thinkingCtx.Blocks))
+	}
+
+	// Check first thinking block
+	if thinkingCtx.Blocks[0].Type != "thinking" {
+		t.Errorf("first block type = %s, want thinking", thinkingCtx.Blocks[0].Type)
+	}
+	if thinkingCtx.Blocks[0].Thinking != "Let me analyze this carefully..." {
+		t.Errorf("first block thinking = %s", thinkingCtx.Blocks[0].Thinking)
+	}
+	if thinkingCtx.Blocks[0].Signature != "sig123" {
+		t.Errorf("first block signature = %s, want sig123", thinkingCtx.Blocks[0].Signature)
+	}
+
+	// Check redacted thinking block
+	if thinkingCtx.Blocks[1].Type != "redacted_thinking" {
+		t.Errorf("second block type = %s, want redacted_thinking", thinkingCtx.Blocks[1].Type)
+	}
+	if thinkingCtx.Blocks[1].Thinking != "[REDACTED]" {
+		t.Errorf("redacted block thinking = %s, want [REDACTED]", thinkingCtx.Blocks[1].Thinking)
+	}
+}
+
+func TestThinkingBlockHandling_NoThinking(t *testing.T) {
+	t.Parallel()
+
+	messageJSON := `{
+		"id": "msg_no_thinking",
+		"type": "message",
+		"role": "assistant",
+		"model": "claude-3-sonnet",
+		"content": [
+			{"type": "text", "text": "Regular response without thinking."}
+		],
+		"usage": {
+			"input_tokens": 5,
+			"output_tokens": 3
+		}
+	}`
+
+	msg := mustUnmarshalMessage(t, messageJSON)
+	builder := ResponseBuilder{}
+
+	resp, err := builder.FromMessage(msg)
+	if err != nil {
+		t.Fatalf("FromMessage() error = %v", err)
+	}
+
+	// Should not have thinking_context in metadata
+	if _, ok := resp.CustomMetadata["thinking_context"]; ok {
+		t.Error("thinking_context should not be present when there are no thinking blocks")
+	}
+
+	// Content should be normal
+	if len(resp.Content.Parts) != 1 {
+		t.Errorf("expected 1 part, got %d", len(resp.Content.Parts))
+	}
+}
+
+func TestBuildPartFromContentBlock_ThinkingTypes(t *testing.T) {
+	t.Parallel()
+
+	builder := &ResponseBuilder{}
+
+	tests := []struct {
+		name            string
+		block           anthropic.ContentBlockUnion
+		wantPart        bool
+		wantThinking    bool
+		wantThinkingVal string
+	}{
+		{
+			name: "thinking_block",
+			block: anthropic.ContentBlockUnion{
+				Type:      "thinking",
+				Thinking:  "Deep analysis here",
+				Signature: "sig456",
+			},
+			wantPart:        false,
+			wantThinking:    true,
+			wantThinkingVal: "Deep analysis here",
+		},
+		{
+			name: "redacted_thinking",
+			block: anthropic.ContentBlockUnion{
+				Type: "redacted_thinking",
+			},
+			wantPart:        false,
+			wantThinking:    true,
+			wantThinkingVal: "[REDACTED]",
+		},
+		{
+			name: "text_block",
+			block: anthropic.ContentBlockUnion{
+				Type: "text",
+				Text: "Normal text",
+			},
+			wantPart:     true,
+			wantThinking: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			part, thinking, err := builder.buildPartFromContentBlock(tt.block)
+			if err != nil {
+				t.Fatalf("buildPartFromContentBlock() error = %v", err)
+			}
+
+			if tt.wantPart && part == nil {
+				t.Error("expected part but got nil")
+			}
+			if !tt.wantPart && part != nil {
+				t.Error("expected nil part but got value")
+			}
+
+			if tt.wantThinking && thinking == nil {
+				t.Error("expected thinking block but got nil")
+			}
+			if !tt.wantThinking && thinking != nil {
+				t.Error("expected nil thinking block but got value")
+			}
+
+			if tt.wantThinking && thinking != nil {
+				if thinking.Thinking != tt.wantThinkingVal {
+					t.Errorf("thinking.Thinking = %s, want %s", thinking.Thinking, tt.wantThinkingVal)
+				}
 			}
 		})
 	}
