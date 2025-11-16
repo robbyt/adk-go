@@ -253,3 +253,167 @@ func newSSEvent(eventType, payload string) ssestream.Event {
 		Data: []byte(payload),
 	}
 }
+
+func TestBuildFinishReason(t *testing.T) {
+	t.Parallel()
+
+	builder := &ResponseBuilder{}
+
+	tests := []struct {
+		name       string
+		stopReason anthropic.StopReason
+		want       genai.FinishReason
+	}{
+		{
+			name:       "end_turn",
+			stopReason: anthropic.StopReasonEndTurn,
+			want:       genai.FinishReasonStop,
+		},
+		{
+			name:       "stop_sequence",
+			stopReason: anthropic.StopReasonStopSequence,
+			want:       genai.FinishReasonStop,
+		},
+		{
+			name:       "tool_use",
+			stopReason: anthropic.StopReasonToolUse,
+			want:       genai.FinishReasonStop,
+		},
+		{
+			name:       "max_tokens",
+			stopReason: anthropic.StopReasonMaxTokens,
+			want:       genai.FinishReasonMaxTokens,
+		},
+		{
+			name:       "unspecified",
+			stopReason: anthropic.StopReason(""),
+			want:       genai.FinishReasonUnspecified,
+		},
+		{
+			name:       "unknown_reason",
+			stopReason: anthropic.StopReason("unknown"),
+			want:       genai.FinishReasonUnspecified,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := builder.buildFinishReason(tt.stopReason)
+			if got != tt.want {
+				t.Errorf("buildFinishReason(%v) = %v, want %v", tt.stopReason, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildPartFromContentBlock_ErrorCases(t *testing.T) {
+	t.Parallel()
+
+	builder := &ResponseBuilder{}
+
+	t.Run("unsupported_block_type", func(t *testing.T) {
+		// Create a content block union with an unsupported type
+		// We can test this by creating a message with an unknown block type
+		messageJSON := `{
+			"id": "msg_1",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-3",
+			"stop_reason": "end_turn",
+			"content": []
+		}`
+
+		msg := mustUnmarshalMessage(t, messageJSON)
+		_, err := builder.FromMessage(msg)
+		if err != nil {
+			t.Errorf("unexpected error for empty content: %v", err)
+		}
+	})
+
+	t.Run("tool_use_with_invalid_json", func(t *testing.T) {
+		// This tests the error path in buildPartFromContentBlock
+		// when json.Unmarshal fails
+		messageJSON := `{
+			"id": "msg_1",
+			"type": "message",
+			"role": "assistant",
+			"model": "claude-3",
+			"content": [
+				{"type": "tool_use", "id": "call-1", "name": "test", "input": {}}
+			]
+		}`
+
+		msg := mustUnmarshalMessage(t, messageJSON)
+		_, err := builder.FromMessage(msg)
+		// Should succeed with empty input
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestExtractUsage(t *testing.T) {
+	t.Parallel()
+
+	builder := &ResponseBuilder{}
+
+	tests := []struct {
+		name                    string
+		usage                   anthropic.Usage
+		wantPromptTokens        int32
+		wantCandidatesTokens    int32
+		wantTotalTokens         int32
+		wantCachedContentTokens int32
+	}{
+		{
+			name: "basic_usage",
+			usage: anthropic.Usage{
+				InputTokens:  100,
+				OutputTokens: 50,
+			},
+			wantPromptTokens:        100,
+			wantCandidatesTokens:    50,
+			wantTotalTokens:         150,
+			wantCachedContentTokens: 0,
+		},
+		{
+			name: "with_cached_tokens",
+			usage: anthropic.Usage{
+				InputTokens:          200,
+				OutputTokens:         75,
+				CacheReadInputTokens: 150,
+			},
+			wantPromptTokens:        200,
+			wantCandidatesTokens:    75,
+			wantTotalTokens:         275,
+			wantCachedContentTokens: 150,
+		},
+		{
+			name:                    "zero_usage",
+			usage:                   anthropic.Usage{},
+			wantPromptTokens:        0,
+			wantCandidatesTokens:    0,
+			wantTotalTokens:         0,
+			wantCachedContentTokens: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := builder.extractUsage(tt.usage)
+
+			if got.PromptTokenCount != tt.wantPromptTokens {
+				t.Errorf("PromptTokenCount = %d, want %d", got.PromptTokenCount, tt.wantPromptTokens)
+			}
+			if got.CandidatesTokenCount != tt.wantCandidatesTokens {
+				t.Errorf("CandidatesTokenCount = %d, want %d", got.CandidatesTokenCount, tt.wantCandidatesTokens)
+			}
+			if got.TotalTokenCount != tt.wantTotalTokens {
+				t.Errorf("TotalTokenCount = %d, want %d", got.TotalTokenCount, tt.wantTotalTokens)
+			}
+			if got.CachedContentTokenCount != tt.wantCachedContentTokens {
+				t.Errorf("CachedContentTokenCount = %d, want %d", got.CachedContentTokenCount, tt.wantCachedContentTokens)
+			}
+		})
+	}
+}

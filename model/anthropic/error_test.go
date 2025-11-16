@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+
+	"github.com/anthropics/anthropic-sdk-go"
 )
 
 func TestNormalizeError_AnthropicError(t *testing.T) {
@@ -320,4 +322,97 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestInferErrorType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		statusCode int
+		want       string
+	}{
+		{
+			name:       "bad_request_400",
+			statusCode: 400,
+			want:       "invalid_request_error",
+		},
+		{
+			name:       "unauthorized_401",
+			statusCode: 401,
+			want:       "authentication_error",
+		},
+		{
+			name:       "forbidden_403",
+			statusCode: 403,
+			want:       "authentication_error",
+		},
+		{
+			name:       "rate_limit_429",
+			statusCode: 429,
+			want:       "rate_limit_error",
+		},
+		{
+			name:       "internal_server_error_500",
+			statusCode: 500,
+			want:       "api_error",
+		},
+		{
+			name:       "bad_gateway_502",
+			statusCode: 502,
+			want:       "api_error",
+		},
+		{
+			name:       "service_unavailable_503",
+			statusCode: 503,
+			want:       "api_error",
+		},
+		{
+			name:       "not_found_404",
+			statusCode: 404,
+			want:       "api_error",
+		},
+		{
+			name:       "unknown_status",
+			statusCode: 999,
+			want:       "api_error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := inferErrorType(tt.statusCode)
+			if got != tt.want {
+				t.Errorf("inferErrorType(%d) = %s, want %s", tt.statusCode, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetErrorCode_WithAnthropicError(t *testing.T) {
+	t.Parallel()
+
+	// Test with direct anthropic.Error (fallback path)
+	apiErr := &anthropic.Error{
+		StatusCode: 429,
+	}
+
+	code := getErrorCode(apiErr)
+	if code != "RATE_LIMIT_EXCEEDED" {
+		t.Errorf("getErrorCode for anthropic.Error = %s, want RATE_LIMIT_EXCEEDED", code)
+	}
+}
+
+func TestGetErrorCode_OtherStatusCodes(t *testing.T) {
+	t.Parallel()
+
+	// Test non-429 status code in anthropic.Error
+	apiErr := &anthropic.Error{
+		StatusCode: 404,
+	}
+
+	code := getErrorCode(apiErr)
+	if code != "API_ERROR" {
+		t.Errorf("getErrorCode for 404 = %s, want API_ERROR", code)
+	}
 }
