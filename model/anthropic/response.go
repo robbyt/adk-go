@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/anthropics/anthropic-sdk-go"
+	"github.com/anthropics/anthropic-sdk-go/shared/constant"
 
 	"google.golang.org/adk/model"
 	"google.golang.org/genai"
@@ -129,27 +130,27 @@ func (builder *ResponseBuilder) buildPartFromContentBlock(block anthropic.Conten
 	blockType := strings.ToLower(block.Type)
 
 	switch {
-	case blockType == "text":
+	case blockType == string(constant.ValueOf[constant.Text]()):
 		return genai.NewPartFromText(block.Text), nil, nil
 
-	case blockType == "thinking":
+	case blockType == string(constant.ValueOf[constant.Thinking]()):
 		// Don't include thinking in regular content, store separately
 		thinking := &ThinkingBlock{
 			Thinking:  block.Thinking,
 			Signature: block.Signature,
-			Type:      "thinking",
+			Type:      string(constant.ValueOf[constant.Thinking]()),
 		}
 		return nil, thinking, nil
 
-	case blockType == "redacted_thinking":
+	case blockType == string(constant.ValueOf[constant.RedactedThinking]()):
 		// Handle redacted thinking (no actual content, just metadata)
 		thinking := &ThinkingBlock{
 			Thinking: "[REDACTED]",
-			Type:     "redacted_thinking",
+			Type:     string(constant.ValueOf[constant.RedactedThinking]()),
 		}
 		return nil, thinking, nil
 
-	case blockType == "tool_use":
+	case blockType == string(constant.ValueOf[constant.ToolUse]()):
 		args := make(map[string]any)
 		if len(block.Input) > 0 {
 			if err := json.Unmarshal(block.Input, &args); err != nil {
