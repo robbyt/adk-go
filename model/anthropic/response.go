@@ -31,6 +31,14 @@ type ThinkingContext struct {
 	Blocks []ThinkingBlock `json:"blocks"`
 }
 
+// Block type constants from the Anthropic SDK
+var (
+	blockTypeText             = string(constant.Text("").Default())
+	blockTypeThinking         = string(constant.Thinking("").Default())
+	blockTypeRedactedThinking = string(constant.RedactedThinking("").Default())
+	blockTypeToolUse          = string(constant.ToolUse("").Default())
+)
+
 func parsePartialStreamEvent(event anthropic.MessageStreamEventUnion) *model.LLMResponse {
 	deltaEvent, ok := event.AsAny().(anthropic.ContentBlockDeltaEvent)
 	if !ok {
@@ -129,28 +137,28 @@ func (builder *ResponseBuilder) FromMessage(message *anthropic.Message) (*model.
 func (builder *ResponseBuilder) buildPartFromContentBlock(block anthropic.ContentBlockUnion) (*genai.Part, *ThinkingBlock, error) {
 	blockType := strings.ToLower(block.Type)
 
-	switch {
-	case blockType == string(constant.ValueOf[constant.Text]()):
+	switch blockType {
+	case blockTypeText:
 		return genai.NewPartFromText(block.Text), nil, nil
 
-	case blockType == string(constant.ValueOf[constant.Thinking]()):
+	case blockTypeThinking:
 		// Don't include thinking in regular content, store separately
 		thinking := &ThinkingBlock{
 			Thinking:  block.Thinking,
 			Signature: block.Signature,
-			Type:      string(constant.ValueOf[constant.Thinking]()),
+			Type:      blockTypeThinking,
 		}
 		return nil, thinking, nil
 
-	case blockType == string(constant.ValueOf[constant.RedactedThinking]()):
+	case blockTypeRedactedThinking:
 		// Handle redacted thinking (no actual content, just metadata)
 		thinking := &ThinkingBlock{
 			Thinking: "[REDACTED]",
-			Type:     string(constant.ValueOf[constant.RedactedThinking]()),
+			Type:     blockTypeRedactedThinking,
 		}
 		return nil, thinking, nil
 
-	case blockType == string(constant.ValueOf[constant.ToolUse]()):
+	case blockTypeToolUse:
 		args := make(map[string]any)
 		if len(block.Input) > 0 {
 			if err := json.Unmarshal(block.Input, &args); err != nil {
